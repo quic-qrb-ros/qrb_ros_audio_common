@@ -14,6 +14,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取完整的提交历史
 
     - name: Install clang-format
       run: sudo apt install -y clang-format
@@ -27,15 +29,35 @@ jobs:
 
     - name: Check code style
       run: |
-        SRC=$(git ls-tree --full-tree -r HEAD | grep -e "\.\(c\|h\|hpp\|cpp\)\$" | cut -f 2)
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # 获取基准和头部提交的 SHA
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "Base SHA: $BASE_SHA"
+          echo "Head SHA: $HEAD_SHA"
+
+          # 获取基准提交
+          git fetch origin $BASE_SHA --depth=1
+
+          # 获取 PR 中更改的源文件
+          SRC=$(git diff --name-only $BASE_SHA $HEAD_SHA | grep -E "\.(c|h|hpp|cpp)$")
+        else
+          # 对于推送事件，检查所有源文件
+          SRC=$(git ls-tree --full-tree -r HEAD | grep -E "\.(c|h|hpp|cpp)$" | cut -f 2)
+        fi
 
         echo -e "Check source files: \n$SRC\n"
-        clang-format -style=file -i $SRC
+        if [ -n "$SRC" ]; then
+          clang-format -style=file -i $SRC
 
-        if ! git diff --exit-code; then
-          echo -e "\nCode does not match required style !!!"
-          echo "Please use clang-format to format your code."
-          exit 1
+          if ! git diff --exit-code; then
+            echo -e "\nCode does not match required style !!!"
+            echo "Please use clang-format to format your code."
+            exit 1
+          else
+            echo "All files are properly formatted."
+          fi
         else
-          echo "All files are properly formatted."
+          echo "No source files to check."
         fi
