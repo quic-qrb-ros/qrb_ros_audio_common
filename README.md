@@ -18,9 +18,10 @@ Currently, we only support use QCLINUX to build
 
 2. Create `ros_ws` directory in `<qirp_decompressed_workspace>/qirp-sdk/`
 
-3. Clone this repository under `<qirp_decompressed_workspace>/qirp-sdk/ros_ws`
+3. Clone this repository and qrb_ros_interfaces under `<qirp_decompressed_workspace>/qirp-sdk/ros_ws`
      ```bash
-     git clone https://github.qualcomm.com/QUIC-QRB-ROS/qrb_ros_audio_common.git
+     git clone https://github.com/quic-qrb-ros/qrb_ros_audio_common.git
+     git clone https://github.com/quic-qrb-ros/qrb_ros_interfaces.git
      ```
 4. Build this project
      ```bash
