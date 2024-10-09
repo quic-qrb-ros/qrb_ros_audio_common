@@ -34,18 +34,18 @@ static void stream_drain_complete(pa_stream * stream, int success, void * userda
 {
   PlaybackStream * current_stream = static_cast<PlaybackStream *>(userdata);
 
-  printf("drain complete2\n");
+  LOGD("drain complete");
 
   if ((current_stream->repeat_count == -1) || (current_stream->repeat_count > 0)) {
     std::thread t([current_stream, stream] {
       if ((current_stream->repeat_count == -1) || (current_stream->repeat_count > 0)) {
-        printf("Repeat Count trigger = %d\n", current_stream->repeat_count);
+        LOGV("Repeat Count %d", current_stream->repeat_count);
         sf_seek(current_stream->snd_file, 0, SEEK_SET);
         if (current_stream->repeat_count > 0)
           current_stream->repeat_count--;
         pa_usec_t usec;
         pa_stream_get_time(stream, &current_stream->start_usec);
-        printf("update start_usec to %f\n", current_stream->start_usec);
+        LOGD("update start_usec to %f", current_stream->start_usec);
         pa_stream_set_write_callback(stream, PlaybackStream::stream_data_callback, current_stream);
         PlaybackStream::stream_data_callback(stream, 1024, current_stream);
         pa_stream_trigger(stream, NULL, NULL);
@@ -53,7 +53,7 @@ static void stream_drain_complete(pa_stream * stream, int success, void * userda
     });
     t.detach();
   } else {
-    printf("EOF\n");
+    LOGI("EOF\n");
     current_stream->internal_stopstream();
   }
 }
@@ -66,7 +66,7 @@ PlaybackStream::PlaybackStream(string filepath, std::shared_ptr<pa_sample_spec> 
       throw std::runtime_error("Open file failed");
     }
   } else {
-    printf("no file path passed, PCM data mode\n");
+    LOGD("no file path passed, PCM data mode\n");
   }
 
   init_pulse_stream();
@@ -82,10 +82,10 @@ int PlaybackStream::start_stream()
   pa_stream_flags_t flags;
   pa_cvolume volume;
 
-  printf("PlaybackStream::start_stream enter\n");
+  LOGD("enter");
+
   if (get_stream_handle() == nullptr || get_stream_state() == PA_STREAM_READY) {
-    printf(
-        "stream handle(%p) state(%d) error, start fail\n", get_stream_handle(), get_stream_state());
+    LOGE("stream handle(%p) state(%d) error, start fail", get_stream_handle(), get_stream_state());
     return -EPERM;
   }
 
@@ -101,7 +101,7 @@ int PlaybackStream::start_stream()
 
   if (pa_stream_connect_playback(
           get_stream_handle(), /*device*/ nullptr, &buffer_attr, flags, &volume, nullptr)) {
-    printf("pa_stream_connect_playback() failed: %s\n",
+    LOGE("pa_stream_connect_playback() failed: %s",
         pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
     return -EIO;
   }
@@ -117,22 +117,22 @@ int PlaybackStream::sndfile_open()
   pa_channel_map channel_map;
   bool match_format = false;
 
-  printf("ready to open %s\n", m_file_path.c_str());
+  LOGI("opening %s", m_file_path.c_str());
   if ((fd = open(m_file_path.c_str(), O_RDONLY, 0666)) < 0) {
-    printf("%s: open %s failed", __func__, m_file_path);
+    LOGE("open %s failed", m_file_path);
     return -ENOENT;
   }
 
   snd_file = sf_open_fd(fd, SFM_READ, &snd_file_info, 0);
   if (snd_file == nullptr) {
-    printf("snd file open failed\n");
+    LOGE("snd file open failed");
     return -SF_ERR_MALFORMED_FILE;
   }
 
   /* get spec from file */
   sf_errno = sf_command(snd_file, SFC_GET_CURRENT_SF_INFO, &snd_file_info, sizeof(snd_file_info));
   if (sf_errno) {
-    printf("snd file SFC_GET_CURRENT_SF_INFO failed");
+    LOGE("snd file SFC_GET_CURRENT_SF_INFO failed");
     return -SF_ERR_UNRECOGNISED_FORMAT;
   }
 
@@ -144,7 +144,7 @@ int PlaybackStream::sndfile_open()
     }
   }
   if (!match_format) {
-    printf("snd file format not support");
+    LOGE("snd file format not support");
     return SF_ERR_UNRECOGNISED_FORMAT;
   }
 
@@ -153,7 +153,10 @@ int PlaybackStream::sndfile_open()
 
   // channel map
   pa_channel_map_init_extend(&channel_map, m_sample_spec->channels, PA_CHANNEL_MAP_DEFAULT);
+
   /* get spec from file end */
+  LOGD("open %s succeed", m_file_path.c_str());
+
   return SF_ERR_NO_ERROR;
 }
 
@@ -161,7 +164,7 @@ size_t PlaybackStream::sndfile_transfer_data(void * data, size_t length)
 {
   sf_count_t bytes = 0;
   if (data == nullptr || snd_file == nullptr) {
-    printf("data or snd_file is nullptr \n");
+    LOGE("data or snd_file is nullptr");
     return -SF_ERR_SYSTEM;
   }
 
@@ -183,8 +186,7 @@ void PlaybackStream::stream_data_callback(pa_stream * stream, size_t length, voi
   for (;;) {
     bytes_written = length;
     if ((pa_stream_begin_write(stream, &buf_pulse, &bytes_written)) < 0) {
-      printf("%s:pa_stream_begin_write failed(%s)\n", __func__,
-          pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+      LOGE("%s:pa_stream_begin_write failed(%s)", pa_strerror(pa_context_errno(pulse_context_)));
       current_stream->internal_stopstream();
     }
 
@@ -192,8 +194,7 @@ void PlaybackStream::stream_data_callback(pa_stream * stream, size_t length, voi
 
     if (bytes_read > 0)
       if (pa_stream_write(stream, buf_pulse, bytes_written, nullptr, 0, PA_SEEK_RELATIVE)) {
-        printf("%s:pa_stream_write failed(%s)\n", __func__,
-            pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+        LOGE("pa_stream_write failed(%s)\n", pa_strerror(pa_context_errno(pulse_context_)));
       } else
         pa_stream_cancel_write(stream);
 
@@ -201,8 +202,7 @@ void PlaybackStream::stream_data_callback(pa_stream * stream, size_t length, voi
       pa_operation * o;
       pa_stream_set_write_callback(stream, nullptr, nullptr);
       if (!(o = pa_stream_drain(stream, stream_drain_complete, current_stream))) {
-        printf("pa_stream_drain failed(%s)\n",
-            pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+        LOGE("pa_stream_drain failed(%s)", pa_strerror(pa_context_errno(pulse_context_)));
       }
       pa_operation_unref(o);
       break;
