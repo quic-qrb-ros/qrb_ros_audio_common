@@ -299,11 +299,10 @@ void AudioCommonNode::create_topic()
     if (stream_type_ == StreamPlayback) {
       rclcpp::SubscriptionOptions sub_options;
       sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
-      audio_data_sub_ =
-          this->create_subscription<qrb_ros_audio_common_msgs::msg::AudioData>(topic_name_.c_str(),
-              10, std::bind(&AudioCommonNode::on_audio_data, this, std::placeholders::_1), sub_options);
-    }
-    else if (stream_type_ == StreamCapture) {
+      audio_data_sub_ = this->create_subscription<qrb_ros_audio_common_msgs::msg::AudioData>(
+          topic_name_.c_str(), 10,
+          std::bind(&AudioCommonNode::on_audio_data, this, std::placeholders::_1), sub_options);
+    } else if (stream_type_ == StreamCapture) {
       rclcpp::PublisherOptions pub_options;
       pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
       audio_data_pub_ = this->create_publisher<qrb_ros_audio_common_msgs::msg::AudioData>(
