@@ -33,7 +33,7 @@ int audio_stream_start(uint32_t stream_handle)
   if (current_stream != nullptr)
     return current_stream->start_stream();
   else {
-    printf("Invailed stream_handle\n");
+    LOGE("Invailed stream_handle");
   }
 
   return -EIO;
@@ -46,7 +46,7 @@ int audio_stream_mute(uint32_t stream_handle, bool mute)
     if (current_stream != nullptr)
       return current_stream->mute_stream(mute);
   } else {
-    printf("Invailed stream_handle\n");
+    LOGE("Invailed stream_handle");
   }
 
   return -EIO;
@@ -59,7 +59,7 @@ int audio_stream_stop(uint32_t stream_handle)
     if (current_stream != nullptr)
       return current_stream->stop_stream();
   } else {
-    printf("Invailed stream_handle\n");
+    LOGE("Invailed stream_handle");
   }
 
   return -EIO;
@@ -76,7 +76,7 @@ int audio_stream_close(uint32_t stream_handle)
       return 0;
     }
   } else {
-    printf("Invailed stream_handle\n");
+    LOGE("Invailed stream_handle");
   }
   return -EIO;
 }
@@ -84,7 +84,7 @@ int audio_stream_close(uint32_t stream_handle)
 size_t audio_stream_write(uint32_t stream_handle, size_t length, void * buf)
 {
   if (stream_handle == 0) {
-    printf("Invailed stream_handle\n");
+    LOGE("Invailed stream_handle");
     return -EIO;
   }
 
@@ -99,7 +99,7 @@ size_t audio_stream_write(uint32_t stream_handle, size_t length, void * buf)
     for (;;) {
       bytes_written = length;
       if (pa_stream_begin_write(pulse_stream, &pulse_buf, &bytes_written) < 0) {
-        printf("%s: failed to pa_stream_begin_write, length %d\n", __func__, length);
+        LOGE("failed to pa_stream_begin_write, length %d", length);
         return -EIO;
       }
       if (bytes_written > 0) {
@@ -113,7 +113,7 @@ size_t audio_stream_write(uint32_t stream_handle, size_t length, void * buf)
       bytes_total_written += bytes_written;
     }
   } else {
-    printf("stream not start\n");
+    LOGE("stream not start");
   }
 
   return bytes_total_written;

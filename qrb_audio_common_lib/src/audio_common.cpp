@@ -18,6 +18,8 @@ namespace qrb
 namespace audio_common_lib
 {
 
+unsigned int log_lvl = (LOG_DEBUG | LOG_INFO | LOG_ERROR);
+
 pa_threaded_mainloop * CommonAudioStream::pulse_mainloop_ = nullptr;
 pa_mainloop_api * CommonAudioStream::pulse_mainloop_api_ = nullptr;
 pa_context * CommonAudioStream::pulse_context_ = nullptr;
@@ -95,8 +97,7 @@ void CommonAudioStream::pulse_stream_update_timing_callback(pa_stream * stream,
 
   if (!success || pa_stream_get_time(stream, &usec) < 0 ||
       pa_stream_get_latency(stream, &l, &negative) < 0) {
-    printf(("Failed to get latency: %s"),
-        pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+    LOGE("failed to get latency: %s", pa_strerror(pa_context_errno(pulse_context_)));
     return;
   }
 
@@ -112,35 +113,33 @@ void CommonAudioStream::pulse_context_time_event_callback(pa_mainloop_api * m,
     const struct timeval * t,
     void * userdata)
 {
-  for (CommonAudioStream * stream : CommonAudioStream::timestamp_streams_) {
+  for (CommonAudioStream * stream : timestamp_streams_) {
     if (stream && stream->get_stream_state() == PA_STREAM_READY) {
       pa_operation * o;
-      if (!(o = pa_stream_update_timing_info(stream->get_stream_handle(),
-                CommonAudioStream::pulse_stream_update_timing_callback, stream)))
-        printf(("pa_stream_update_timing_info() failed: %s"),
-            pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+      if (!(o = pa_stream_update_timing_info(
+                stream->get_stream_handle(), pulse_stream_update_timing_callback, stream)))
+        LOGE("pa_stream_update_timing_info() failed: %s",
+            pa_strerror(pa_context_errno(pulse_context_)));
       else
         pa_operation_unref(o);
     }
   }
 
-  pa_context_rttime_restart(
-      CommonAudioStream::pulse_context_, e, pa_rtclock_now() + TIME_EVENT_USEC);
+  pa_context_rttime_restart(pulse_context_, e, pa_rtclock_now() + TIME_EVENT_USEC);
 }
 
 int CommonAudioStream::register_stream_timestamp_event(CommonAudioStream * stream_handle)
 {
-  CommonAudioStream::timestamp_streams_.insert(stream_handle);
+  timestamp_streams_.insert(stream_handle);
 
-  if (CommonAudioStream::pulse_context_time_event_ == nullptr) {
-    CommonAudioStream::pulse_context_time_event_ =
-        pa_context_rttime_new(CommonAudioStream::pulse_context_, pa_rtclock_now() + TIME_EVENT_USEC,
-            CommonAudioStream::pulse_context_time_event_callback, nullptr);
-    if (!CommonAudioStream::pulse_context_time_event_) {
-      printf("pa_context_rttime_new failed\n");
+  if (pulse_context_time_event_ == nullptr) {
+    pulse_context_time_event_ = pa_context_rttime_new(pulse_context_,
+        pa_rtclock_now() + TIME_EVENT_USEC, pulse_context_time_event_callback, nullptr);
+    if (!pulse_context_time_event_) {
+      LOGE("pa_context_rttime_new failed");
       return -1;
     } else {
-      printf("init context time event succeed\n");
+      LOGD("init context time event succeed");
     }
   }
 
@@ -149,12 +148,11 @@ int CommonAudioStream::register_stream_timestamp_event(CommonAudioStream * strea
 
 void CommonAudioStream::deregister_stream_timestamp_event(CommonAudioStream * stream_handle)
 {
-  CommonAudioStream::timestamp_streams_.erase(stream_handle);
+  timestamp_streams_.erase(stream_handle);
 
-  if ((CommonAudioStream::timestamp_streams_.size() == 0) &&
-      CommonAudioStream::pulse_context_time_event_) {
-    CommonAudioStream::pulse_mainloop_api_->time_free(CommonAudioStream::pulse_context_time_event_);
-    CommonAudioStream::pulse_context_time_event_ = nullptr;
+  if ((timestamp_streams_.size() == 0) && pulse_context_time_event_) {
+    pulse_mainloop_api_->time_free(pulse_context_time_event_);
+    pulse_context_time_event_ = nullptr;
   }
 }
 
@@ -162,12 +160,9 @@ void CommonAudioStream::pulse_context_state_callback(pa_context * context, void 
 {
   assert(context);
 
-  CommonAudioStream::pulse_context_state_ = pa_context_get_state(context);
-  printf(
-      "CommonAudioStream::pulse_context_state_callback:CommonAudioStream::"
-      "pulse_context_state_ = %d\n",
-      CommonAudioStream::pulse_context_state_);
-  switch (CommonAudioStream::pulse_context_state_) {
+  pulse_context_state_ = pa_context_get_state(context);
+  LOGD("pulse_context_state_ = %d", pulse_context_state_);
+  switch (pulse_context_state_) {
     case PA_CONTEXT_CONNECTING:
     case PA_CONTEXT_AUTHORIZING:
     case PA_CONTEXT_SETTING_NAME:
@@ -180,13 +175,12 @@ void CommonAudioStream::pulse_context_state_callback(pa_context * context, void 
       break;
 
     case PA_CONTEXT_FAILED:
-      printf("pulse context state PA_CONTEXT_FAILED\n");
-      pa_context_unref(pulse_context_);
-      pulse_context_ = nullptr;
-      init_pulse_env();
+      LOGI("pulse context state PA_CONTEXT_FAILED");
+      std::thread(clean_pulse_mainloop).detach();
       break;
+
     default:
-      printf("pulse context state update error: %s\n", pa_strerror(pa_context_errno(context)));
+      LOGE("pulse context state update error: %s", pa_strerror(pa_context_errno(context)));
   }
 }
 
@@ -198,8 +192,7 @@ void CommonAudioStream::pulse_stream_state_callback(pa_stream * stream, void * u
   uint32_t stream_handle = get_common_stream_handle(current_stream);
 
   current_stream->set_stream_state(pa_stream_get_state(stream));
-  printf("CommonAudioStream::pulse_stream_state_callback enter status = %d\n",
-      current_stream->get_stream_state());
+  LOGD("enter status = %d", current_stream->get_stream_state());
 
   Stream_Event_Data dummy_data;
 
@@ -216,94 +209,109 @@ void CommonAudioStream::pulse_stream_state_callback(pa_stream * stream, void * u
       current_stream->event_cb(StreamEvent::StreamAbort, dummy_data, (void *)stream_handle);
       break;
     default:
-      printf("%s:pulse stream state update failed\n", __func__);
+      LOGE("pulse stream state update failed");
   }
-  pa_threaded_mainloop_signal(CommonAudioStream::pulse_mainloop_, 0);
+
+  if (pulse_mainloop_)
+    pa_threaded_mainloop_signal(pulse_mainloop_, 0);
 }
 
 void CommonAudioStream::stream_underflow_callback(pa_stream * stream, void * userdata)
 {
   assert(stream);
-  printf("Stream underrun.\n");
+  LOGD("Stream underrun.");
 }
 
 void CommonAudioStream::stream_overflow_callback(pa_stream * stream, void * userdata)
 {
   assert(stream);
-  printf("Stream overrun.\n");
+  LOGD("Stream overrun.");
 }
 
 pa_threaded_mainloop * CommonAudioStream::init_pulse_env()
 {
-  bool first_init = false;
+  static bool first_init = false;
+  bool need_start_mainloop = false;
 
-  if (CommonAudioStream::pulse_mainloop_ != nullptr && pulse_context_ != nullptr)
-    return CommonAudioStream::pulse_mainloop_;
+  if (pulse_mainloop_ != nullptr && pulse_context_ != nullptr)
+    return pulse_mainloop_;
 
-  if (CommonAudioStream::pulse_mainloop_ == nullptr) {
+  if (pulse_mainloop_ == nullptr) {
     first_init = true;
-    CommonAudioStream::pulse_mainloop_ = pa_threaded_mainloop_new();
-    if (!CommonAudioStream::pulse_mainloop_) {
-      printf("CommonAudioStream::pulse_mainloop_ fail\n");
-      return nullptr;
-    }
-
-    if (pa_threaded_mainloop_start(CommonAudioStream::pulse_mainloop_) < 0) {
-      printf("pa_threaded_mainloop_start() failed.\n");
-      pa_threaded_mainloop_free(pulse_mainloop_);
-      CommonAudioStream::pulse_mainloop_ = nullptr;
+    need_start_mainloop = true;
+    pulse_mainloop_ = pa_threaded_mainloop_new();
+    if (!pulse_mainloop_) {
+      LOGE("create pulse_mainloop_ fail");
       return nullptr;
     }
   }
 
-  if (CommonAudioStream::pulse_mainloop_api_ == nullptr)
-    CommonAudioStream::pulse_mainloop_api_ =
-        pa_threaded_mainloop_get_api(CommonAudioStream::pulse_mainloop_);
+  if (pulse_mainloop_api_ == nullptr)
+    pulse_mainloop_api_ = pa_threaded_mainloop_get_api(pulse_mainloop_);
 
-  if (CommonAudioStream::pulse_context_ == nullptr)
-    CommonAudioStream::pulse_context_ =
-        pa_context_new(CommonAudioStream::pulse_mainloop_api_, "ros_context");
+  if (pulse_context_ == nullptr)
+    pulse_context_ = pa_context_new(pulse_mainloop_api_, "ros_context");
 
-  if (CommonAudioStream::pulse_context_ == nullptr) {
-    printf("pulseaudio context init fail\n");
+  if (pulse_context_ == nullptr) {
+    LOGE("pulseaudio context init fail");
     return nullptr;
   }
 
-  pa_context_set_state_callback(
-      CommonAudioStream::pulse_context_, CommonAudioStream::pulse_context_state_callback, nullptr);
+  pa_context_set_state_callback(pulse_context_, pulse_context_state_callback, nullptr);
 
-  if (pa_context_connect(CommonAudioStream::pulse_context_, nullptr, PA_CONTEXT_NOFLAGS, nullptr) <
-      0) {
-    printf("connect pulseaudio server fail %s\n",
-        pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+  if (pa_context_connect(pulse_context_, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0) {
+    LOGE("connect pulseaudio server fail %s", pa_strerror(pa_context_errno(pulse_context_)));
+    return nullptr;
   }
+
+  if (need_start_mainloop)
+    if (pa_threaded_mainloop_start(pulse_mainloop_) < 0) {
+      LOGE("pa_threaded_mainloop_start() failed.");
+      pa_threaded_mainloop_free(pulse_mainloop_);
+      pulse_mainloop_ = nullptr;
+      return nullptr;
+    }
 
   if (first_init)
     atexit(clean_pulse_mainloop);
 
-  return CommonAudioStream::pulse_mainloop_;
+  return pulse_mainloop_;
 }
 
 void CommonAudioStream::clean_pulse_mainloop()
 {
-  if (pulse_context_)
-    pa_context_unref(pulse_context_);
-
+  LOGD("enter");
   if (pulse_context_time_event_) {
     if (pulse_mainloop_api_)
       pulse_mainloop_api_->time_free(pulse_context_time_event_);
+    pulse_context_time_event_ = nullptr;
+  }
+
+  if (!stream_list_.empty()) {
+    for (auto it = stream_list_.begin(); it != stream_list_.end();) {
+      CommonAudioStream * current_stream = it->second;
+      ++it;
+      delete current_stream;
+    }
+  }
+
+  if (pulse_context_) {
+    pa_context_unref(pulse_context_);
+    pulse_context_ = nullptr;
   }
 
   if (pulse_mainloop_) {
     pa_threaded_mainloop_stop(pulse_mainloop_);
     pa_threaded_mainloop_free(pulse_mainloop_);
+    pulse_mainloop_ = nullptr;
+    pulse_mainloop_api_ = nullptr;
   };
 }
 
 void CommonAudioStream::check_context_ready()
 {
   for (;;) {
-    if (CommonAudioStream::pulse_context_state_ == PA_CONTEXT_READY)
+    if (pulse_context_state_ == PA_CONTEXT_READY)
       break;
     usleep(5000);
   }
@@ -320,16 +328,23 @@ CommonAudioStream::CommonAudioStream(string filepath, std::shared_ptr<pa_sample_
 
 CommonAudioStream::~CommonAudioStream()
 {
-  printf("delete Stream handle %p", this);
+  LOGD("delete Stream handle %u", get_common_stream_handle(this));
   switch (stream_state_) {
     case PA_STREAM_READY:
       stop_stream();
     case PA_STREAM_TERMINATED:
+    case PA_STREAM_UNCONNECTED:
+      close_stream();
+      break;
+    case PA_STREAM_FAILED:
+      stop_stream();
       close_stream();
       break;
     default:
       break;
   }
+
+  delete_stream(this);
 
   if (snd_file) {
     sf_close(snd_file);
@@ -363,7 +378,7 @@ uint32_t CommonAudioStream::audio_stream_open(const audio_stream_info & stream_i
   }
 
   if (stream_info.file_path.empty() && (!pa_sample_spec_valid(stream_sample_spec.get()))) {
-    printf("Stream sample spec is invalid\n");
+    LOGE("Stream sample spec is invalid");
     return stream_handle;
   }
 
@@ -375,19 +390,19 @@ uint32_t CommonAudioStream::audio_stream_open(const audio_stream_info & stream_i
     else
       stream = nullptr;
   } catch (const std::runtime_error & e) {
-    printf("create stream error:%s\n", e.what());
+    LOGE("create stream error:%s", e.what());
     stream = nullptr;
   }
 
   if (!stream)
     return stream_handle;
-  printf("create stream succeed\n");
+  LOGD("create stream succeed");
 
   if (stream_info.volume && stream_info.volume > STREAM_VOL_MIN &&
       stream_info.volume <= STREAM_VOL_MAX)
     stream->mvolume = stream_info.volume;
   else {
-    printf("Wrong volume");
+    LOGE("Wrong volume");
     return stream_handle;
   }
 
@@ -397,7 +412,7 @@ uint32_t CommonAudioStream::audio_stream_open(const audio_stream_info & stream_i
   stream->pcm_mode_ = stream_info.pcm_mode;
 
   if (stream_info.need_timestamp) {
-    CommonAudioStream::register_stream_timestamp_event(stream);
+    register_stream_timestamp_event(stream);
   }
 
   return add_stream(stream);
@@ -408,7 +423,7 @@ void CommonAudioStream::init_pulse_stream()
   stream_handle_ = pa_stream_new(CommonAudioStream::pulse_context_,
       std::to_string(intptr_t(this)).c_str(), m_sample_spec.get(), nullptr);
   if (stream_handle_ == nullptr) {
-    printf("create stream:%s\n", pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
+    LOGE("create stream:%s", pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
     throw std::runtime_error("create pulseaudio stream return nullptr");
   }
 
@@ -424,7 +439,7 @@ void CommonAudioStream::init_pulse_stream()
 int CommonAudioStream::pause_stream(bool pause)
 {
   if (stream_state_ != PA_STREAM_READY) {
-    printf("stream state(%d) error, pause fail\n", stream_state_);
+    LOGE("stream state(%d) error, pause fail", stream_state_);
     return -1;
   }
 
@@ -445,7 +460,7 @@ int CommonAudioStream::mute_stream(bool mute)
   op = pa_context_set_sink_input_mute(
       CommonAudioStream::pulse_context_, stream_index, mute, nullptr, nullptr);
   if (!op) {
-    printf("%s:failed to set stream(%d) to mute(%d)", stream_handle_, mute);
+    LOGE("%s:failed to set stream(%d) to mute(%d)", stream_handle_, mute);
     pa_operation_unref(op);
   }
 
@@ -454,23 +469,25 @@ int CommonAudioStream::mute_stream(bool mute)
 
 int CommonAudioStream::stop_stream()
 {
-  printf("stream state(%d), stop_stream enter\n", stream_state_);
+  LOGD("stream state(%d)", stream_state_);
 
   if (stream_state_ == PA_STREAM_TERMINATED) {
-    printf("stream state(%d) already in stop\n", stream_state_);
+    LOGI("stream state(%d) already in stop", stream_state_);
     return 0;
   }
 
-  if (stream_state_ != PA_STREAM_READY) {
-    printf("stream state(%d) error, Stop fail\n", stream_state_);
+  if (stream_state_ != PA_STREAM_READY || stream_state_ == PA_STREAM_FAILED) {
+    LOGE("stream state(%d) error, Stop fail", stream_state_);
     return -EPERM;
   }
 
   CommonAudioStream::deregister_stream_timestamp_event(this);
 
+  repeat_count = 0;
+
   if (pa_stream_disconnect(stream_handle_) < 0) {  // after disconnect state will be
                                                    // PA_STREAM_TERMINATED(4)
-    printf("Disconnect Stream fail\n");
+    LOGE("Disconnect Stream fail");
   }
 
   pa_threaded_mainloop_lock(CommonAudioStream::pulse_mainloop_);
@@ -478,7 +495,8 @@ int CommonAudioStream::stop_stream()
     pa_threaded_mainloop_wait(CommonAudioStream::pulse_mainloop_);
   }
   pa_threaded_mainloop_unlock(CommonAudioStream::pulse_mainloop_);
-  printf("stop_stream complete, stream_state_ = %d\n", stream_state_);
+
+  LOGD("complete, stream_state_ = %d", stream_state_);
   return 0;
 }
 
@@ -490,19 +508,22 @@ void CommonAudioStream::internal_stopstream()
 
 int CommonAudioStream::close_stream()
 {
-  printf(
-      "stream state(%d), stream_handle_(%p) close_stream enter\n", stream_state_, stream_handle_);
+  LOGD("stream state(%d), stream_handle_(%u)", stream_state_, get_common_stream_handle(this));
 
-  if ((stream_state_ != PA_STREAM_TERMINATED) && (stream_state_ != PA_STREAM_FAILED)) {
-    printf("stream state(%d) error, Close fail\n", stream_state_);
+  if ((stream_state_ == PA_STREAM_CREATING) || (stream_state_ == PA_STREAM_READY)) {
+    LOGE("stream state(%d) error, Close fail", stream_state_);
     return -EPERM;
   }
   if (stream_handle_) {
+    pa_stream_set_state_callback(stream_handle_, nullptr, nullptr);
+    pa_stream_set_underflow_callback(stream_handle_, nullptr, nullptr);
+    pa_stream_set_overflow_callback(stream_handle_, nullptr, nullptr);
+    pa_stream_set_write_callback(stream_handle_, nullptr, nullptr);
+    pa_stream_set_read_callback(stream_handle_, nullptr, nullptr);
+
     pa_stream_unref(stream_handle_);
     stream_handle_ = nullptr;
   }
-
-  delete_stream(this);
 
   if (stream_handle_ == nullptr)
     return 0;

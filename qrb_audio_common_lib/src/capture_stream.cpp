@@ -33,7 +33,7 @@ CaptureStream::CaptureStream(string filepath, std::shared_ptr<pa_sample_spec> sa
     if (sndfile_open())
       throw std::runtime_error("Open file failed");
   } else {
-    printf("no file path passed, PCM data mode\n");
+    LOGD("no file path passed, PCM data mode");
   }
 
   repeat_count = 0;
@@ -50,8 +50,10 @@ int CaptureStream::start_stream()
   pa_cvolume volume;
   pa_stream * stream = get_stream_handle();
 
+  LOGD("enter");
+
   if (stream == nullptr || get_stream_state() != PA_STREAM_UNCONNECTED) {
-    printf("stream handle(%p) state(%d) error, start fail", stream, get_stream_state());
+    LOGE("stream handle(%p) state(%d) error, start fail", stream, get_stream_state());
     return -EPERM;
   }
 
@@ -64,7 +66,7 @@ int CaptureStream::start_stream()
   pa_cvolume_set(&volume, m_sample_spec->channels, PA_VOLUME_NORM * mvolume / STREAM_VOL_MAX);
 
   if (pa_stream_connect_record(stream, /*device*/ nullptr, &buffer_attr, flags)) {
-    printf("pa_stream_connect_playback() failed: %s\n",
+    LOGE("pa_stream_connect_playback() failed: %s",
         pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
     return -EIO;
   }
@@ -102,23 +104,26 @@ int CaptureStream::sndfile_open()
   }
 
   if (!match_format) {
-    printf("snd file format not support");
+    LOGE("snd file format not support");
     return SF_ERR_UNRECOGNISED_FORMAT;
   }
 
   snd_file_info.format |= SF_FORMAT_WAV;
 
-  printf("ready to open %s\n", m_file_path.c_str());
+  LOGI("opening %s", m_file_path.c_str());
   if ((fd = open(m_file_path.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666)) < 0) {
-    printf("%s: open %s failed", __func__, m_file_path);
+    LOGE("open %s failed", m_file_path);
     return -ENOMEM;
   }
 
   snd_file = sf_open_fd(fd, SFM_WRITE, &snd_file_info, 0);
   if (snd_file == nullptr) {
-    printf("snd file open failed\n");
+    LOGE("snd file open failed");
     return -SF_ERR_MALFORMED_FILE;
   }
+
+  LOGD("open %s succeed", m_file_path.c_str());
+
   return SF_ERR_NO_ERROR;
 }
 
@@ -126,7 +131,7 @@ size_t CaptureStream::sndfile_transfer_data(const void * data, size_t length)
 {
   sf_count_t bytes = 0;
   if (data == nullptr || snd_file == nullptr) {
-    printf("data or snd_file is nullptr \n");
+    LOGE("data or snd_file is nullptr");
     return -SF_ERR_SYSTEM;
   }
 
@@ -146,8 +151,8 @@ void CaptureStream::stream_data_callback(pa_stream * stream, size_t length, void
     const void * data;
 
     if (pa_stream_peek(stream, &data, &length) < 0) {
-      printf("%s:pa_stream_peek() failed(%s)"), __func__,
-          pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_));
+      LOGE("pa_stream_peek() failed(%s)",
+          pa_strerror(pa_context_errno(CommonAudioStream::pulse_context_)));
       current_stream->internal_stopstream();
     }
 
@@ -166,7 +171,7 @@ void CaptureStream::stream_data_callback(pa_stream * stream, size_t length, void
     }
 
     if (bytes < (sf_count_t)length) {
-      printf("write to file fail\n");
+      LOGE("write to file fail");
       current_stream->internal_stopstream();
     }
 
