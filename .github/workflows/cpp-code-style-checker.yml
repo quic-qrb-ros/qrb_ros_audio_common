@@ -1,11 +1,6 @@
 name: Cpp Code Style Checker
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
   cpp-code-style-check:
@@ -14,8 +9,6 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Install clang-format
       run: sudo apt install -y clang-format
@@ -29,31 +22,15 @@ jobs:
 
     - name: Check code style
       run: |
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-
-          echo "Base SHA: $BASE_SHA"
-          echo "Head SHA: $HEAD_SHA"
-
-          git fetch origin $BASE_SHA --depth=1
-
-          SRC=$(git diff --name-only $BASE_SHA $HEAD_SHA | grep -E "\.(c|h|hpp|cpp)$")
-        else
-          SRC=$(git ls-tree --full-tree -r HEAD | grep -E "\.(c|h|hpp|cpp)$" | cut -f 2)
-        fi
+        SRC=$(git ls-tree --full-tree -r HEAD | grep -e "\.\(c\|h\|hpp\|cpp\)\$" | cut -f 2)
 
         echo -e "Check source files: \n$SRC\n"
-        if [ -n "$SRC" ]; then
-          clang-format -style=file -i $SRC
+        clang-format -style=file -i $SRC
 
-          if ! git diff --exit-code; then
-            echo -e "\nCode does not match required style !!!"
-            echo "Please use clang-format to format your code."
-            exit 1
-          else
-            echo "All files are properly formatted."
-          fi
+        if ! git diff --exit-code; then
+          echo -e "\nCode does not match required style !!!"
+          echo "Please use clang-format to format your code."
+          exit 1
         else
-          echo "No source files to check."
+          echo "All files are properly formatted."
         fi
